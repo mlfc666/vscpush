@@ -1,0 +1,9 @@
+# 编译产物
+/vscpush
+/vscpush.exe
+/dist/
+
+# 编辑器/系统杂物
+.DS_Store
+.idea/
+.vscode/
