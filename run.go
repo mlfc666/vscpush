@@ -11,16 +11,26 @@ import (
 )
 
 // run 串起整条流水线：连远端 → 探架构 → 并发下载 → SFTP 上传 → 远端校验 →（可选）解包安装。
+// 加 -no-upload 且显式给了 -arch 时，完全不连远端，退化成纯下载器。
 func run(ctx context.Context, c *config) error {
 	t0 := time.Now()
 	fmt.Printf("▸ %s v%s\n", toolName, toolVersion)
 
-	rc, err := dialRemote(c)
-	if err != nil {
-		return err
+	var rc *remoteConn
+	if c.noUpload && c.arch != "auto" {
+		if err := checkArch(c.arch); err != nil {
+			return err
+		}
+		fmt.Printf("  跳过远端连接（-no-upload 且已指定 -arch=%s）\n", c.arch)
+	} else {
+		var err error
+		rc, err = dialRemote(c)
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		fmt.Printf("  已连接 %s@%s:%d，家目录 %s\n", c.user, c.host, c.port, rc.home)
 	}
-	defer rc.Close()
-	fmt.Printf("  已连接 %s@%s:%d，家目录 %s\n", c.user, c.host, c.port, rc.home)
 
 	if c.arch == "auto" {
 		a, err := rc.detectArch()
@@ -29,8 +39,10 @@ func run(ctx context.Context, c *config) error {
 		}
 		c.arch = a
 		fmt.Printf("  远端架构 %s（自动探测），对应服务端包 linux-%s\n", rc.unameArch, c.arch)
-	} else if err := checkArch(c.arch); err != nil {
-		return err
+	} else if rc != nil {
+		if err := checkArch(c.arch); err != nil {
+			return err
+		}
 	}
 
 	name := c.remoteName
@@ -38,20 +50,24 @@ func run(ctx context.Context, c *config) error {
 		name = fmt.Sprintf("vscode-server-linux-%s.tar.gz", c.arch)
 	}
 	dlURL := fmt.Sprintf("https://update.code.visualstudio.com/commit:%s/server-linux-%s/stable", c.commit, c.arch)
+	if c.url != "" {
+		dlURL = c.url
+	}
 	localPath := filepath.Join(c.localDir, name)
-	remotePath := rc.absPath(path.Join(c.remoteDir, name))
 
 	installDir := c.installDir
 	if installDir == "" {
 		installDir = path.Join(".vscode-server", "bin", c.commit)
 	}
-	installDir = rc.absPath(installDir)
 
 	fmt.Printf("  下载地址 %s\n", dlURL)
 	fmt.Printf("  本地文件 %s\n", localPath)
-	fmt.Printf("  远端文件 %s:%s\n", c.host, remotePath)
-	if c.install {
-		fmt.Printf("  安装目录 %s（上传后解包）\n", installDir)
+	if rc != nil && !c.noUpload {
+		installDir = rc.absPath(installDir)
+		fmt.Printf("  远端文件 %s:%s\n", c.host, rc.absPath(path.Join(c.remoteDir, name)))
+		if c.install {
+			fmt.Printf("  安装目录 %s（上传后解包）\n", installDir)
+		}
 	}
 
 	fmt.Printf("\n▸ 探测下载源 …\n")
@@ -91,6 +107,14 @@ func run(ctx context.Context, c *config) error {
 		return fmt.Errorf("下载文件大小异常: 本地 %d != 预期 %d", info.Size(), rf.size)
 	}
 
+	if c.noUpload || rc == nil {
+		fmt.Printf("\n✅ 完成，总耗时 %s\n", fmtDur(time.Since(t0)))
+		fmt.Printf("   下载  %s  %s/s  %s\n", humanBytes(info.Size()), humanBytes(rate(info.Size(), dlDur)), fmtDur(dlDur))
+		fmt.Printf("   本地  %s\n", localPath)
+		return nil
+	}
+
+	remotePath := rc.absPath(path.Join(c.remoteDir, name))
 	fmt.Printf("\n▸ 上传到 %s:%s\n", c.host, remotePath)
 	up := newProgress("上传", info.Size())
 	up.Start()

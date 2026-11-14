@@ -80,3 +80,34 @@ func TestHumanBytesAndDur(t *testing.T) {
 		t.Errorf("fmtDur = %q", got)
 	}
 }
+
+func TestSplitSpans(t *testing.T) {
+	cases := []struct{ size, piece int64 }{
+		{0, 1 << 20},
+		{1, 1 << 20},
+		{1 << 20, 1 << 20},
+		{(1 << 20) + 1, 1 << 20},
+		{236720088, 1 << 20},
+		{100, 7},
+	}
+	for _, c := range cases {
+		sp := splitSpans(c.size, c.piece)
+		if c.size == 0 {
+			if len(sp) != 0 {
+				t.Fatalf("size=0 应该没有片段，得到 %d", len(sp))
+			}
+			continue
+		}
+		if sp[0].start != 0 || sp[len(sp)-1].end != c.size-1 {
+			t.Fatalf("size=%d piece=%d 覆盖不对: %v", c.size, c.piece, sp)
+		}
+		for i, s := range sp {
+			if s.end < s.start {
+				t.Fatalf("片段 %d 区间非法: %v", i, s)
+			}
+			if i > 0 && sp[i-1].end+1 != s.start {
+				t.Fatalf("片段 %d 不连续: %v -> %v", i, sp[i-1], s)
+			}
+		}
+	}
+}

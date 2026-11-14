@@ -20,7 +20,7 @@ import (
 
 const (
 	toolName    = "vscpush"
-	toolVersion = "0.1.0"
+	toolVersion = "0.2.0"
 )
 
 type config struct {
@@ -41,6 +41,8 @@ type config struct {
 	dryRun     bool
 	quiet      bool
 	noVerify   bool
+	noUpload   bool
+	url        string
 	strictHost bool
 	timeout    time.Duration
 }
@@ -94,6 +96,8 @@ func parseFlags() (*config, error) {
 	fs.BoolVar(&c.dryRun, "dry-run", false, "只探测并打印执行计划，不下载、不上传")
 	fs.BoolVar(&c.quiet, "quiet", false, "不打印进度条")
 	fs.BoolVar(&c.noVerify, "no-verify", false, "跳过上传后的远端 sha256 复算校验")
+	fs.BoolVar(&c.noUpload, "no-upload", false, "只下载到本地，不上传（配合 -arch 可完全不连远端）")
+	fs.StringVar(&c.url, "url", "", "覆盖下载地址，用于自建镜像或离线缓存服务器")
 	fs.BoolVar(&c.strictHost, "strict-host-key", false, "严格主机密钥校验：不在 known_hosts 里就直接拒绝")
 	fs.DurationVar(&c.timeout, "timeout", 30*time.Minute, "整体超时时间")
 	fs.BoolVar(&showVersion, "version", false, "打印版本号后退出")
