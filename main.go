@@ -20,7 +20,7 @@ import (
 
 const (
 	toolName    = "vscpush"
-	toolVersion = "0.2.0"
+	toolVersion = "0.3.0"
 )
 
 type config struct {
@@ -43,6 +43,7 @@ type config struct {
 	noVerify   bool
 	noUpload   bool
 	url        string
+	engine     string
 	strictHost bool
 	timeout    time.Duration
 }
@@ -98,6 +99,7 @@ func parseFlags() (*config, error) {
 	fs.BoolVar(&c.noVerify, "no-verify", false, "跳过上传后的远端 sha256 复算校验")
 	fs.BoolVar(&c.noUpload, "no-upload", false, "只下载到本地，不上传（配合 -arch 可完全不连远端）")
 	fs.StringVar(&c.url, "url", "", "覆盖下载地址，用于自建镜像或离线缓存服务器")
+	fs.StringVar(&c.engine, "engine", "auto", "下载引擎：auto（有 aria2c 就用）/ aria2c / builtin")
 	fs.BoolVar(&c.strictHost, "strict-host-key", false, "严格主机密钥校验：不在 known_hosts 里就直接拒绝")
 	fs.DurationVar(&c.timeout, "timeout", 30*time.Minute, "整体超时时间")
 	fs.BoolVar(&showVersion, "version", false, "打印版本号后退出")
@@ -139,6 +141,11 @@ func parseFlags() (*config, error) {
 	}
 	if c.conns > 32 {
 		c.conns = 32
+	}
+	switch c.engine {
+	case EngineAuto, EngineAria2, EngineBuiltin:
+	default:
+		return nil, fmt.Errorf("-engine 只能是 auto / aria2c / builtin，收到 %q", c.engine)
 	}
 	if c.port < 1 || c.port > 65535 {
 		return nil, fmt.Errorf("端口不合法: %d", c.port)

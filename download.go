@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -86,6 +87,97 @@ func parseContentRangeTotal(v string) (int64, error) {
 		return 0, fmt.Errorf("大小未知")
 	}
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// 下载引擎：auto 有 aria2c 就用它，没有就用内置实现。
+const (
+	EngineAuto    = "auto"
+	EngineAria2   = "aria2c"
+	EngineBuiltin = "builtin"
+)
+
+// aria2Path 判断系统里有没有 aria2c。
+func aria2Path() (string, bool) {
+	p, err := exec.LookPath("aria2c")
+	if err != nil {
+		return "", false
+	}
+	return p, true
+}
+
+// pickEngine 决定实际用哪个引擎。
+func pickEngine(want string) string {
+	switch want {
+	case EngineBuiltin:
+		return EngineBuiltin
+	case EngineAria2:
+		return EngineAria2
+	}
+	if _, ok := aria2Path(); ok {
+		return EngineAria2
+	}
+	return EngineBuiltin
+}
+
+// downloadAria2 把下载交给系统的 aria2c，参数与内置实现对齐（连接数、1 MiB 最小分片）。
+//
+// 为什么不解析它的输出做进度条：aria2c 的实时读数行在管道下是块缓冲的（攒满 4 KiB 才吐），
+// 解析出来只会是「长时间 0% 然后瞬间 100%」。所以这里把 stdout/stderr 直接接到终端，
+// 让它自己渲染 `[#gid 12MiB/225MiB(5%) CN:16 DL:6.9MiB ETA:30s]` 那行，与直接用 aria2c 体验一致。
+func downloadAria2(ctx context.Context, rf *remoteFile, dest string, conns int, quiet bool) error {
+	bin, ok := aria2Path()
+	if !ok {
+		return fmt.Errorf("找不到 aria2c（请先安装，或用 -engine builtin）")
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(dest)
+	_ = os.Remove(dest + ".aria2")
+
+	perServer := conns
+	if perServer > 16 { // aria2c 单服务器连接数上限就是 16
+		perServer = 16
+	}
+	if perServer < 1 {
+		perServer = 1
+	}
+	args := []string{
+		fmt.Sprintf("--max-connection-per-server=%d", perServer),
+		fmt.Sprintf("--split=%d", conns),
+		"--min-split-size=1M",
+		"--file-allocation=none",
+		"--auto-file-renaming=false",
+		"--allow-overwrite=true",
+		"--console-log-level=error",
+		"--summary-interval=0",
+		"--enable-color=false",
+		"--max-tries=8",
+		"--retry-wait=1",
+		"--timeout=30",
+		"--connect-timeout=30",
+	}
+	if quiet {
+		args = append(args, "--quiet=true")
+	}
+	args = append(args, "-d", filepath.Dir(dest), "-o", filepath.Base(dest), rf.url)
+
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("aria2c 退出异常: %w", err)
+	}
+	if rf.size > 0 {
+		st, err := os.Stat(dest)
+		if err != nil {
+			return fmt.Errorf("aria2c 结束后找不到文件: %w", err)
+		}
+		if st.Size() != rf.size {
+			return fmt.Errorf("aria2c 产物大小异常: %d != %d", st.Size(), rf.size)
+		}
+	}
+	return nil
 }
 
 func downloadFile(ctx context.Context, rf *remoteFile, dest string, conns int, pr *progress) error {

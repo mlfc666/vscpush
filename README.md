@@ -10,9 +10,10 @@ tar 解包）又太啰嗦，于是把它做成一个自包含的 Go CLI。
 
 ## 特性
 
-- **零外部依赖**：不调用 aria2c / curl / scp / rsync，下载、上传、校验全在进程内。
-- **并发 Range 下载**：默认 16 连接、1 MiB 动态分片（worker 抢占），链路不均匀时不会被最慢的
-  那条连接拖住；CDN 按连接限速时实测从 445 KB/s 提到 7~10 MiB/s。
+- **下载默认交给 aria2c**：系统装了 aria2c 就用它（`-engine auto`，其终端读数就是进度条），
+  没装则自动回退到内置的并发 Range 下载器；上传与校验不依赖 scp/rsync，全在进程内。
+- **内置并发 Range 下载器**（`-engine builtin`）：16 连接、1 MiB 动态分片（worker 抢占），
+  链路不均匀时不会被最慢的那条连接拖住；CDN 按连接限速时实测从 445 KB/s 提到 7~10 MiB/s。
 - **SSH/SFTP 上传**：支持 ssh-agent、私钥（`-key`）、密码（`VSCPUSH_PASSWORD`）。
 - **端到端校验**：本地算 sha256，上传后在远端用 `sha256sum` 复算比对，坏包立刻失败。
 - **架构自动识别**：登录后 `uname -m` → `arm64` / `x64` / `armhf`，不用猜。
@@ -79,6 +80,7 @@ which vscpush && vscpush -version
 | `-no-verify` | `false` | 跳过远端 sha256 复算 |
 | `-no-upload` | `false` | 只下载，不上传（配 `-arch` 可完全不连远端） |
 | `-url` | 空 | 覆盖下载地址，用于自建镜像 / 离线缓存 |
+| `-engine` | `auto` | 下载引擎：`auto`（有 aria2c 就用）/ `aria2c`（强制）/ `builtin`（内置） |
 | `-strict-host-key` | `false` | 主机密钥不在 known_hosts 里就拒绝（默认 accept-new） |
 | `-timeout` | `30m` | 整体超时 |
 
@@ -111,6 +113,9 @@ which vscpush && vscpush -version
 | 等分固定块（v0.1） | 1.93s | 4.94s（慢 2.6×，被最慢连接拖住） |
 | 动态分片（v0.2 起） | 1.90s | 1.94s |
 
+> 上表中 vscpush 的成绩是**内置下载器**（`-engine builtin`）的实测；v0.3 起下载默认交给
+> aria2c，此时下载阶段的表现与直接跑 aria2c 等价。
+
 结论：CDN 是「每连接统一限速」，调度策略的差异落在噪声里，两者持平；真正拉开差距的是
 链路不均衡——这也是把等分固定块换成动态分片的原因。
 
@@ -127,7 +132,10 @@ aria2c 明显更强的地方是**功能**而非速度：断点续传、多镜像
 3. **校验**：流式算 sha256。
 4. **上传**：`sftp.MkdirAll` + `Create` + `io.CopyBuffer`，`UseConcurrentWrites` 打开。
 5. **远端校验**：`sha256sum` 输出与本地比对。
-6. **安装**：`pgrep -f bin/<commit>/out/server-main.js` 做护栏 → `mkdir -p` →
+6. **引擎选择**：`exec.LookPath("aria2c")` 决定 `-engine auto` 走哪条路；aria2c 的实时读数
+   在管道下是块缓冲的，解析它做进度条只会「长时间 0% 然后瞬间 100%」，所以 aria2c 引擎直接把
+   stdout/stderr 交给终端（真 TTY 下它会原地刷新），失败时自动回退内置下载器重来一遍。
+7. **安装**：`pgrep -f bin/<commit>/out/server-main.js` 做护栏 → `mkdir -p` →
    `tar -xzf ... --strip-components=1` → `node --version` 自检。
 
 ## 代码结构
@@ -144,6 +152,7 @@ aria2c 明显更强的地方是**功能**而非速度：断点续传、多镜像
 ## 限制
 
 - 只覆盖 `x64` / `arm64` / `armhf` 的 linux 包，不处理 alpine 变体。
+- aria2c 是**可选**依赖：装了更快更稳，没装则用内置下载器（功能等价，仅调度策略不同）。
 - 上传是单流 SFTP，约 8 MiB/s；要更快可以扩展成多连接分片上传。
 - 不支持断点续传：每次覆盖下载；重试只发生在单个分片内部。
 - 带口令的私钥不做交互式解密，请用 ssh-agent 或 `ssh-keygen -p` 去掉口令。

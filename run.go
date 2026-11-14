@@ -82,16 +82,36 @@ func run(ctx context.Context, c *config) error {
 		return nil
 	}
 
-	fmt.Printf("\n▸ 下载（%d 连接并发）\n", c.conns)
-	pr := newProgress("下载", rf.size)
-	pr.Start()
-	dlStart := time.Now()
-	err = downloadFile(ctx, rf, localPath, c.conns, pr)
-	pr.Stop()
-	if err != nil {
-		return fmt.Errorf("下载失败: %w", err)
+	engine := pickEngine(c.engine)
+	var dlDur time.Duration
+
+	if engine == EngineAria2 {
+		bin, _ := aria2Path()
+		fmt.Printf("\n▸ 下载（%d 连接并发，引擎 aria2c：%s）\n", c.conns, bin)
+		start := time.Now()
+		err = downloadAria2(ctx, rf, localPath, c.conns, c.quiet)
+		dlDur = time.Since(start)
+		if err != nil {
+			if c.engine != EngineAuto {
+				return fmt.Errorf("下载失败: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "  ⚠ aria2c 失败（%v），回退到内置下载器\n", err)
+			engine, err = EngineBuiltin, nil
+		}
 	}
-	dlDur := time.Since(dlStart)
+
+	if engine == EngineBuiltin {
+		fmt.Printf("\n▸ 下载（%d 连接并发，引擎 内置下载器）\n", c.conns)
+		pr := newProgress("下载", rf.size)
+		pr.Start()
+		start := time.Now()
+		err = downloadFile(ctx, rf, localPath, c.conns, pr)
+		pr.Stop()
+		dlDur = time.Since(start)
+		if err != nil {
+			return fmt.Errorf("下载失败: %w", err)
+		}
+	}
 
 	sha, err := fileSHA256(localPath)
 	if err != nil {

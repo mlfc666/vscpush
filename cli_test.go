@@ -111,3 +111,19 @@ func TestSplitSpans(t *testing.T) {
 		}
 	}
 }
+
+func TestPickEngine(t *testing.T) {
+	if got := pickEngine(EngineBuiltin); got != EngineBuiltin {
+		t.Errorf("builtin 请求得到 %q", got)
+	}
+	if got := pickEngine(EngineAria2); got != EngineAria2 {
+		t.Errorf("aria2c 请求得到 %q", got)
+	}
+	if _, has := aria2Path(); has {
+		if got := pickEngine(EngineAuto); got != EngineAria2 {
+			t.Errorf("有 aria2c 时 auto 应选 aria2c，得到 %q", got)
+		}
+	} else if got := pickEngine(EngineAuto); got != EngineBuiltin {
+		t.Errorf("无 aria2c 时 auto 应选 builtin，得到 %q", got)
+	}
+}
