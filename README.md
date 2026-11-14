@@ -11,7 +11,8 @@ tar 解包）又太啰嗦，于是把它做成一个自包含的 Go CLI。
 ## 特性
 
 - **零外部依赖**：不调用 aria2c / curl / scp / rsync，下载、上传、校验全在进程内。
-- **并发 Range 下载**：默认 16 连接。CDN 按连接限速时，实测从 445 KB/s 提到 7 MiB/s。
+- **并发 Range 下载**：默认 16 连接、1 MiB 动态分片（worker 抢占），链路不均匀时不会被最慢的
+  那条连接拖住；CDN 按连接限速时实测从 445 KB/s 提到 7~10 MiB/s。
 - **SSH/SFTP 上传**：支持 ssh-agent、私钥（`-key`）、密码（`VSCPUSH_PASSWORD`）。
 - **端到端校验**：本地算 sha256，上传后在远端用 `sha256sum` 复算比对，坏包立刻失败。
 - **架构自动识别**：登录后 `uname -m` → `arm64` / `x64` / `armhf`，不用猜。
@@ -76,6 +77,8 @@ which vscpush && vscpush -version
 | `-dry-run` | `false` | 只探测并打印计划 |
 | `-quiet` | `false` | 关闭进度条 |
 | `-no-verify` | `false` | 跳过远端 sha256 复算 |
+| `-no-upload` | `false` | 只下载，不上传（配 `-arch` 可完全不连远端） |
+| `-url` | 空 | 覆盖下载地址，用于自建镜像 / 离线缓存 |
 | `-strict-host-key` | `false` | 主机密钥不在 known_hosts 里就拒绝（默认 accept-new） |
 | `-timeout` | `30m` | 整体超时 |
 
@@ -90,12 +93,37 @@ which vscpush && vscpush -version
 对照：服务器上单连接 `curl` 是 445 KB/s / 8m39s；`aria2c + scp` 方案约 55s（下载 34.6s +
 上传 20.5s，scp 单流略快于原生 SFTP）。
 
+## 基准测试
+
+同一份 225.8 MiB 的 arm64 包，与 `aria2c` **交替执行**（避免链路波动只偏袒一方）。
+
+**真实 CDN（update.code.visualstudio.com）**
+
+| 连接数 | aria2c 中位数 | vscpush 中位数 |
+|---|---|---|
+| 16 | 32.09s（7.04 MiB/s） | 30.85s（7.32 MiB/s） |
+| 32 | 22.44s（10.06 MiB/s） | 21.88s（10.32 MiB/s） |
+
+**可控不均衡链路**：本地服务器按 TCP 连接限速（8 条 10 MiB/s + 8 条 1 MiB/s），80 MiB，16 连接
+
+| 实现 | aria2c | vscpush |
+|---|---|---|
+| 等分固定块（v0.1） | 1.93s | 4.94s（慢 2.6×，被最慢连接拖住） |
+| 动态分片（v0.2 起） | 1.90s | 1.94s |
+
+结论：CDN 是「每连接统一限速」，调度策略的差异落在噪声里，两者持平；真正拉开差距的是
+链路不均衡——这也是把等分固定块换成动态分片的原因。
+
+aria2c 明显更强的地方是**功能**而非速度：断点续传、多镜像/Metalink/BitTorrent、RPC、
+内置校验、整体限速等。本项目刻意只覆盖「一条固定链路：下载官方包 → 推到一台机器」。
+
 ## 实现要点
 
 1. **探测**：发一个 `Range: bytes=0-0` 的 GET，既跟随 302 拿到最终地址，也确认服务端返回
    206（支持分片）并从 `Content-Range` 得到总长度。
-2. **并发下载**：按 `conns` 把文件切段，每段独立 goroutine + 最多 8 次退避重试，用
-   `WriteAt` 写同一文件的不同偏移；进度只做原子累加，渲染交给单个 ticker。
+2. **并发下载**：整包按 1 MiB 切片进队列，`conns` 个 worker 竞争领取（动态分片），
+   每片独立重试最多 8 次，用 `WriteAt` 写同一文件的不同偏移；进度只做原子累加，
+   渲染交给单个 ticker。
 3. **校验**：流式算 sha256。
 4. **上传**：`sftp.MkdirAll` + `Create` + `io.CopyBuffer`，`UseConcurrentWrites` 打开。
 5. **远端校验**：`sha256sum` 输出与本地比对。
