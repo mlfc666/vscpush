@@ -164,3 +164,7 @@ aria2c 明显更强的地方是**功能**而非速度：断点续传、多镜像
   `-force`，避免把正在使用的会话拆掉。
 - 下载走 `HTTPS_PROXY` / `HTTP_PROXY`（`http.ProxyFromEnvironment`），内网代理环境可用。
 - 首次连接未知主机时打印密钥指纹后继续（accept-new 语义），可用 `-strict-host-key` 收紧。
+- **主机密钥算法协商**：Go 的默认顺序先试 `ecdsa-sha2-nistp256`，而 OpenSSH 客户端优先
+  `ssh-ed25519`。若 `known_hosts` 里只记了 ed25519（平时都用 `ssh` 连就会这样），Go 会拿
+  ecdsa 去比对并报 `knownhosts: key mismatch`——看着像服务器换了密钥，其实只是算法不同。
+  v0.3.1 起会先读 `known_hosts` 里该主机记录过的类型并提到协商顺序最前，与 OpenSSH 行为一致。

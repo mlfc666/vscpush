@@ -38,10 +38,11 @@ func dialRemote(c *config) (*remoteConn, error) {
 		return nil, err
 	}
 	cfg := &ssh.ClientConfig{
-		User:            c.user,
-		Auth:            methods,
-		HostKeyCallback: hostKey,
-		Timeout:         20 * time.Second,
+		User:              c.user,
+		Auth:              methods,
+		HostKeyCallback:   hostKey,
+		HostKeyAlgorithms: preferredHostKeyAlgorithms(c),
+		Timeout:           20 * time.Second,
 	}
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
 	cl, err := ssh.Dial("tcp", addr, cfg)
@@ -229,6 +230,85 @@ func authMethods(c *config) ([]ssh.AuthMethod, error) {
 		return nil, errors.New("没有可用认证方式：请用 -key 指定私钥、启动 ssh-agent，或设置 VSCPUSH_PASSWORD")
 	}
 	return methods, nil
+}
+
+// preferredHostKeyAlgorithms 让协商顺序优先命中 known_hosts 里已有的密钥类型。
+//
+// 背景：Go 的默认顺序会先试 ecdsa-sha2-nistp256，而 OpenSSH 客户端优先 ed25519。
+// 如果 known_hosts 里只记了 ed25519（很常见，因为平时都用 ssh 连），Go 就会拿 ecdsa
+// 去比对，knownhosts 直接报 "key mismatch"——看起来像服务器换了密钥，其实只是算法不同。
+// 这里把 known_hosts 里出现过的类型提到前面，行为就和 OpenSSH 一致了。
+func preferredHostKeyAlgorithms(c *config) []string {
+	known := knownHostKeyTypes(c)
+	if len(known) == 0 {
+		return nil // 交给 Go 默认顺序
+	}
+	seen := make(map[string]bool, len(known))
+	out := make([]string, 0, len(known)+4)
+	for _, t := range known {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	// 其余类型作为后备，避免 known_hosts 里只有一种算法时把别的算法彻底排除。
+	for _, t := range []string{"ssh-ed25519", "ecdsa-sha2-nistp256", "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"} {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// knownHostKeyTypes 读出 known_hosts 中该主机记录过的密钥类型。
+func knownHostKeyTypes(c *config) []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	khPath := filepath.Join(home, ".ssh", "known_hosts")
+	data, err := os.ReadFile(khPath)
+	if err != nil {
+		return nil
+	}
+	host := c.host
+	if c.port != 22 {
+		host = fmt.Sprintf("[%s]:%d", c.host, c.port)
+	}
+	var types []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		if !hostMatches(fields[0], host) {
+			continue
+		}
+		types = append(types, fields[1])
+	}
+	return types
+}
+
+// hostMatches 处理 known_hosts 首列的匹配（支持逗号分隔、通配符和哈希记录）。
+func hostMatches(pattern, host string) bool {
+	if strings.HasPrefix(pattern, "|1|") {
+		// 哈希记录无法反解，交给 knownhosts 包自己判断，这里不参与排序。
+		return false
+	}
+	for _, p := range strings.Split(pattern, ",") {
+		if p == host {
+			return true
+		}
+		if ok, _ := filepath.Match(p, host); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // hostKeyCallback 默认采用 accept-new 语义：known_hosts 里有就严格比对，

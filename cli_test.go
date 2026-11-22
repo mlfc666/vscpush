@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseContentRangeTotal(t *testing.T) {
 	cases := []struct {
@@ -125,5 +129,48 @@ func TestPickEngine(t *testing.T) {
 		}
 	} else if got := pickEngine(EngineAuto); got != EngineBuiltin {
 		t.Errorf("无 aria2c 时 auto 应选 builtin，得到 %q", got)
+	}
+}
+
+func TestHostMatches(t *testing.T) {
+	cases := []struct {
+		pattern, host string
+		want          bool
+	}{
+		{"10.21.243.251", "10.21.243.251", true},
+		{"10.21.243.251,10.0.0.1", "10.0.0.1", true},
+		{"10.21.243.251,10.0.0.1", "10.21.243.251", true},
+		{"10.21.243.*", "10.21.243.251", true},
+		{"[10.21.243.251]:2222", "[10.21.243.251]:2222", true},
+		{"10.21.243.251", "10.21.243.252", false},
+		{"|1|abc=|def=", "10.21.243.251", false}, // 哈希记录不参与排序
+	}
+	for _, c := range cases {
+		if got := hostMatches(c.pattern, c.host); got != c.want {
+			t.Errorf("hostMatches(%q,%q) = %v, want %v", c.pattern, c.host, got, c.want)
+		}
+	}
+}
+
+func TestPreferredHostKeyAlgorithms(t *testing.T) {
+	// 用一个临时 HOME 构造 known_hosts，验证 ed25519 被提到最前
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	kh := filepath.Join(dir, ".ssh", "known_hosts")
+	content := "10.21.243.251 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK7lh1IM2P90LM+78liFS48UEuTJrikqzOOPJovV2KpJ\n"
+	if err := os.WriteFile(kh, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	got := preferredHostKeyAlgorithms(&config{host: "10.21.243.251", port: 22})
+	if len(got) == 0 || got[0] != "ssh-ed25519" {
+		t.Fatalf("应优先 ssh-ed25519，得到 %v", got)
+	}
+	// 未知主机时应返回 nil，交回 Go 默认顺序
+	if got := preferredHostKeyAlgorithms(&config{host: "192.0.2.99", port: 22}); got != nil {
+		t.Errorf("未知主机应返回 nil，得到 %v", got)
 	}
 }

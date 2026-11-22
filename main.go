@@ -20,7 +20,7 @@ import (
 
 const (
 	toolName    = "vscpush"
-	toolVersion = "0.3.0"
+	toolVersion = "0.3.1"
 )
 
 type config struct {
