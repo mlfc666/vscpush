@@ -17,8 +17,9 @@ tar 解包）又太啰嗦，于是把它做成一个自包含的 Go CLI。
 - **SSH/SFTP 上传**：支持 ssh-agent、私钥（`-key`）、密码（`VSCPUSH_PASSWORD`）。
 - **端到端校验**：本地算 sha256，上传后在远端用 `sha256sum` 复算比对，坏包立刻失败。
 - **架构自动识别**：登录后 `uname -m` → `arm64` / `x64` / `armhf`，不用猜。
-- **可选一键安装**：`-install` 解包到 `~/.vscode-server/bin/<commit>`；若该 commit 的 server
-  正在运行会**拒绝覆盖**（保护在线会话），除非显式 `-force`。
+- **默认就装到正确位置**：解包到 `~/.vscode-server/bin/<commit>`（VS Code 真正检查的目录），
+  先解到临时目录再整体换入，避免半成品目录；若该 commit 的 server 正在运行会**拒绝覆盖**
+  （保护在线会话），除非显式 `-force`。只想留个包用 `-no-install`。
 - 进度条、ETA、限速统计；非 TTY 自动降级为低频文本行。
 
 ## 构建
@@ -72,7 +73,8 @@ which vscpush && vscpush -version
 | `-remote-dir` | 家目录 | 远端落地目录（支持 `~` 与相对路径） |
 | `-remote-name` | `vscode-server-linux-<arch>.tar.gz` | 远端文件名 |
 | `-local-dir` | `$TMPDIR` | 本地下载目录 |
-| `-install` | `false` | 上传后解包安装 |
+| `-install` | **`true`** | 上传后解包安装到 VS Code 期望的位置（默认开启） |
+| `-no-install` | `false` | 只上传压缩包，不解包 |
 | `-install-dir` | `~/.vscode-server/bin/<commit>` | 安装目录 |
 | `-force` | `false` | 该 commit 的 server 在跑也强制覆盖 |
 | `-dry-run` | `false` | 只探测并打印计划 |
@@ -135,8 +137,9 @@ aria2c 明显更强的地方是**功能**而非速度：断点续传、多镜像
 6. **引擎选择**：`exec.LookPath("aria2c")` 决定 `-engine auto` 走哪条路；aria2c 的实时读数
    在管道下是块缓冲的，解析它做进度条只会「长时间 0% 然后瞬间 100%」，所以 aria2c 引擎直接把
    stdout/stderr 交给终端（真 TTY 下它会原地刷新），失败时自动回退内置下载器重来一遍。
-7. **安装**：`pgrep -f bin/<commit>/out/server-main.js` 做护栏 → `mkdir -p` →
-   `tar -xzf ... --strip-components=1` → `node --version` 自检。
+7. **安装**：`pgrep -f bin/<commit>/out/server-main.js` 做护栏 → 解到 `<dir>.vscpush-tmp` →
+   清空目标目录 → `cp -a` 换入 → `node --version` 自检。先解临时目录是为了避免解包中途失败
+   留下半个 server 目录，让 VS Code 误判「已安装」而反复失败。
 
 ## 代码结构
 
@@ -157,6 +160,16 @@ aria2c 明显更强的地方是**功能**而非速度：断点续传、多镜像
 - 不支持断点续传：每次覆盖下载；重试只发生在单个分片内部。
 - 带口令的私钥不做交互式解密，请用 ssh-agent 或 `ssh-keygen -p` 去掉口令。
 - `-password` 会留在 shell 历史里，优先用 `VSCPUSH_PASSWORD`。
+
+## 为什么必须装到 `~/.vscode-server/bin/<commit>/`
+
+Remote-SSH 的判定逻辑是：**该目录下能跑起 `bin/code-server` 就直接用，否则触发下载**。
+它并不检查家目录里有没有同名压缩包。所以只把 `vscode-server.tar.gz` 传到 `~` 是没用的——
+VS Code 仍会走 `Trigger local server download`，在客户端重新下一遍。
+
+（VS Code 自己的「客户端下载后传给服务端」流程，是把包放到
+`~/.vscode-server/bin/<commit>/vscode-server.tar.gz` 并写一个 `.done` 标记，再由服务端解包。
+`vscpush` 走的是更直接的路：直接在服务端解包到位，跳过这套握手机制。）
 
 ## 已知边界
 

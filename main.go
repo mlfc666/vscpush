@@ -20,7 +20,7 @@ import (
 
 const (
 	toolName    = "vscpush"
-	toolVersion = "0.3.1"
+	toolVersion = "0.4.0"
 )
 
 type config struct {
@@ -42,6 +42,7 @@ type config struct {
 	quiet      bool
 	noVerify   bool
 	noUpload   bool
+	noInstall  bool
 	url        string
 	engine     string
 	strictHost bool
@@ -91,9 +92,10 @@ func parseFlags() (*config, error) {
 	fs.StringVar(&c.remoteDir, "remote-dir", "", "远端落地目录（默认登录用户的主目录）")
 	fs.StringVar(&c.remoteName, "remote-name", "", "远端文件名（默认 vscode-server-linux-<arch>.tar.gz）")
 	fs.StringVar(&c.localDir, "local-dir", os.TempDir(), "本地临时下载目录")
-	fs.BoolVar(&c.install, "install", false, "上传后就地解包安装到 ~/.vscode-server/bin/<commit>")
+	fs.BoolVar(&c.install, "install", true, "上传后解包安装到 ~/.vscode-server/bin/<commit>（VS Code 期望的位置）")
 	fs.StringVar(&c.installDir, "install-dir", "", "解包目标目录（默认 ~/.vscode-server/bin/<commit>）")
 	fs.BoolVar(&c.force, "force", false, "即使该 commit 的 server 正在运行也强制覆盖安装（会打断在线会话）")
+	fs.BoolVar(&c.noInstall, "no-install", false, "只上传压缩包，不解包安装")
 	fs.BoolVar(&c.dryRun, "dry-run", false, "只探测并打印执行计划，不下载、不上传")
 	fs.BoolVar(&c.quiet, "quiet", false, "不打印进度条")
 	fs.BoolVar(&c.noVerify, "no-verify", false, "跳过上传后的远端 sha256 复算校验")
@@ -136,6 +138,9 @@ func parseFlags() (*config, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("缺少必填参数 %s", strings.Join(missing, "、"))
 	}
+	if c.noInstall {
+		c.install = false
+	}
 	if c.conns < 1 {
 		c.conns = 1
 	}
@@ -173,8 +178,8 @@ func usage() {
   # 下载 + 上传到主目录（arm64 自动识别）
   %s -commit 69047191fc427f2f92828279aae1d90d8eeda7ab -host 10.24.10.224 -user liaobin
 
-  # 顺手装好，装完打印 node 版本
-  %s -commit 69047191fc427f2f92828279aae1d90d8eeda7ab -host 10.24.10.224 -user liaobin --install
+  # 只上传压缩包，不安装
+  %s -commit 69047191fc427f2f92828279aae1d90d8eeda7ab -host 10.24.10.224 -user liaobin -no-install
 
   # 只看看要做什么
   %s -commit 69047191fc427f2f92828279aae1d90d8eeda7ab -host 10.24.10.224 -user liaobin --dry-run

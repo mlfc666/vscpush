@@ -174,8 +174,17 @@ func (r *remoteConn) install(tarball, dir, commit string, force bool) (string, e
 			}
 		}
 	}
-	cmd := fmt.Sprintf("set -e; mkdir -p %s; tar -xzf %s -C %s --strip-components=1; %s/node --version",
-		shellQuote(dir), shellQuote(tarball), shellQuote(dir), shellQuote(dir))
+	// 解包到临时目录再整体换入：避免解到一半失败留下半个 server 目录，
+	// 让 VS Code 误以为已安装而反复失败。
+	tmp := dir + ".vscpush-tmp"
+	cmd := fmt.Sprintf(
+		"set -e; rm -rf %[1]s; mkdir -p %[1]s; "+
+			"tar -xzf %[2]s -C %[1]s --strip-components=1; "+
+			"%[1]s/node --version; "+
+			"rm -rf %[3]s; mkdir -p %[3]s; "+
+			"if [ -d %[3]s ]; then find %[3]s -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true; fi; "+
+			"cp -a %[1]s/. %[3]s/; rm -rf %[1]s",
+		shellQuote(tmp), shellQuote(tarball), shellQuote(dir))
 	out, err := r.exec(cmd)
 	if err != nil {
 		return "", err
