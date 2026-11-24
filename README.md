@@ -22,6 +22,24 @@ tar 解包）又太啰嗦，于是把它做成一个自包含的 Go CLI。
   （保护在线会话），除非显式 `-force`。只想留个包用 `-no-install`。
 - 进度条、ETA、限速统计；非 TTY 自动降级为低频文本行。
 
+## 安装
+
+从 [Releases](https://github.com/mlfc666/vscpush/releases) 下载对应平台的压缩包，或：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mlfc666/vscpush/main/install.sh | sh
+```
+
+支持平台（全部静态编译，`CGO_ENABLED=0`）：
+
+| 系统 | 架构 |
+|---|---|
+| Linux | x86_64 / aarch64(arm64) / armv7 / armv6 / i386 |
+| macOS | Intel (amd64) / Apple Silicon (arm64) |
+| Windows | x64 / arm64 / x86 |
+
+Linux 产物不依赖 glibc，**各发行版通用**（Alpine、Debian/Ubuntu、RHEL/CentOS、Arch、openSUSE 等）。
+
 ## 构建
 
 ```bash

@@ -14,7 +14,7 @@ import (
 // 加 -no-upload 且显式给了 -arch 时，完全不连远端，退化成纯下载器。
 func run(ctx context.Context, c *config) error {
 	t0 := time.Now()
-	fmt.Printf("▸ %s v%s\n", toolName, toolVersion)
+	fmt.Printf("▸ %s v%s\n", toolName, toolVersion())
 
 	var rc *remoteConn
 	if c.noUpload && c.arch != "auto" {

@@ -52,7 +52,7 @@ func resolveDownload(ctx context.Context, rawURL string) (*remoteFile, error) {
 		return nil, err
 	}
 	req.Header.Set("Range", "bytes=0-0")
-	req.Header.Set("User-Agent", toolName+"/"+toolVersion)
+	req.Header.Set("User-Agent", toolName+"/"+toolVersion())
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -195,7 +195,7 @@ func downloadSingle(ctx context.Context, rf *remoteFile, dest string, pr *progre
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", toolName+"/"+toolVersion)
+	req.Header.Set("User-Agent", toolName+"/"+toolVersion())
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
@@ -294,7 +294,7 @@ func fetchRange(ctx context.Context, url string, f *os.File, start, end int64, p
 			return err
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", pos, end))
-		req.Header.Set("User-Agent", toolName+"/"+toolVersion)
+		req.Header.Set("User-Agent", toolName+"/"+toolVersion())
 
 		resp, err := httpClient.Do(req)
 		if err != nil {

@@ -1,0 +1,142 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: vscpush
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: vscpush
+    main: .
+    binary: vscpush
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.buildVersion={{ .Version }}
+      - -X main.buildCommit={{ .ShortCommit }}
+      - -X main.buildDate={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+      - arm
+    goarm:
+      - "6"
+      - "7"
+    # 只保留真实存在的组合：goarm 仅对 linux/arm 有意义。
+    ignore:
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm
+      - goos: linux
+        goarch: amd64
+        goarm: "6"
+      - goos: linux
+        goarch: amd64
+        goarm: "7"
+      - goos: linux
+        goarch: arm64
+        goarm: "6"
+      - goos: linux
+        goarch: arm64
+        goarm: "7"
+      - goos: linux
+        goarch: "386"
+        goarm: "6"
+      - goos: linux
+        goarch: "386"
+        goarm: "7"
+      - goos: darwin
+        goarch: amd64
+        goarm: "6"
+      - goos: darwin
+        goarch: amd64
+        goarm: "7"
+      - goos: darwin
+        goarch: arm64
+        goarm: "6"
+      - goos: darwin
+        goarch: arm64
+        goarm: "7"
+      - goos: windows
+        goarch: amd64
+        goarm: "6"
+      - goos: windows
+        goarch: amd64
+        goarm: "7"
+      - goos: windows
+        goarch: arm64
+        goarm: "6"
+      - goos: windows
+        goarch: arm64
+        goarm: "7"
+      - goos: windows
+        goarch: "386"
+        goarm: "6"
+      - goos: windows
+        goarch: "386"
+        goarm: "7"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: mlfc666
+    name: vscpush
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  footer: |
+    ## 安装
+
+    ```bash
+    # Linux / macOS（自动识别架构）
+    curl -fsSL https://raw.githubusercontent.com/mlfc666/vscpush/main/install.sh | sh
+    ```
+
+    或直接下载对应平台的压缩包，解压后把 `vscpush` 放进 `$PATH`。
+
+    **说明**：`vscpush` 是静态编译（`CGO_ENABLED=0`），Linux 各发行版通用，
+    不依赖 glibc 版本；`linux_arm64` 适用于 aarch64 服务器（如 Ascend NPU 机器）。

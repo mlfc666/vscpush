@@ -18,10 +18,23 @@ import (
 	"time"
 )
 
-const (
-	toolName    = "vscpush"
-	toolVersion = "0.4.0"
+const toolName = "vscpush"
+
+// 以下三个变量由构建时通过 -ldflags -X 注入；本地 go build 时保持默认值。
+var (
+	buildVersion = "0.4.0"
+	buildCommit  = "dev"
+	buildDate    = "unknown"
 )
+
+// toolVersion 是展示用版本号：Release 构建注入 v1.2.3，本地构建显示 0.4.0。
+func toolVersion() string {
+	v := strings.TrimPrefix(buildVersion, "v")
+	if buildCommit != "" && buildCommit != "dev" {
+		return fmt.Sprintf("%s (%s, %s)", v, buildCommit, buildDate)
+	}
+	return v
+}
 
 type config struct {
 	commit     string
@@ -114,7 +127,7 @@ func parseFlags() (*config, error) {
 		return nil, err
 	}
 	if showVersion {
-		fmt.Printf("%s v%s\n", toolName, toolVersion)
+		fmt.Printf("%s v%s\n", toolName, toolVersion())
 		return nil, nil
 	}
 	if showHelp {
@@ -185,6 +198,6 @@ func usage() {
   %s -commit 69047191fc427f2f92828279aae1d90d8eeda7ab -host 10.24.10.224 -user liaobin --dry-run
 
 选项：
-`, toolName, toolVersion, toolName, toolName, toolName, toolName)
+`, toolName, toolVersion(), toolName, toolName, toolName, toolName)
 	flag.PrintDefaults()
 }
