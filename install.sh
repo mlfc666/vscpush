@@ -44,9 +44,14 @@ esac
 version="${VSCPUSH_VERSION:-}"
 if [ -z "$version" ]; then
 	info "查询最新版本…"
-	version=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" |
+	# 优先用 API；匿名访问可能被限流（403），此时回退到 releases/latest 的重定向地址
+	version=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null |
 		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-	[ -n "$version" ] || die "无法获取最新版本，请用 VSCPUSH_VERSION 指定"
+	if [ -z "$version" ]; then
+		version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null |
+			sed -n 's#.*/tag/\(.*\)$#\1#p')
+	fi
+	[ -n "$version" ] || die "无法获取最新版本（GitHub API 可能被限流），请用 VSCPUSH_VERSION 指定，例如 VSCPUSH_VERSION=v0.4.0"
 fi
 ver_no_v=$(printf '%s' "$version" | sed 's/^v//')
 
@@ -78,10 +83,17 @@ if curl -fsSL "https://github.com/${REPO}/releases/download/${version}/checksums
 fi
 
 tar -xzf "$tmp/$asset" -C "$tmp"
-[ -f "$tmp/$BIN" ] || die "压缩包里没有 $BIN"
+# 压缩包内是 <name>/vscpush 结构，用 find 兜底，避免依赖具体目录名
+binpath=$(find "$tmp" -type f -name "$BIN" -perm -u+x | head -1)
+[ -n "$binpath" ] || binpath=$(find "$tmp" -type f -name "$BIN" | head -1)
+[ -n "$binpath" ] || die "压缩包里没有 $BIN"
 
 # ---- 选择安装目录 ----
 dir="${VSCPUSH_BIN_DIR:-/usr/local/bin}"
+# 目录可能还不存在：先尝试创建，再判断可写性
+if [ ! -d "$dir" ]; then
+	mkdir -p "$dir" 2>/dev/null || true
+fi
 if [ ! -w "$dir" ]; then
 	if [ "$(id -u)" = "0" ]; then
 		mkdir -p "$dir"
@@ -92,7 +104,7 @@ if [ ! -w "$dir" ]; then
 	fi
 fi
 
-install -m 0755 "$tmp/$BIN" "$dir/$BIN"
+install -m 0755 "$binpath" "$dir/$BIN"
 info "已安装到 $dir/$BIN"
 
 case ":$PATH:" in
