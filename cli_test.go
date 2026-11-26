@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -172,5 +173,42 @@ func TestPreferredHostKeyAlgorithms(t *testing.T) {
 	// 未知主机时应返回 nil，交回 Go 默认顺序
 	if got := preferredHostKeyAlgorithms(&config{host: "192.0.2.99", port: 22}); got != nil {
 		t.Errorf("未知主机应返回 nil，得到 %v", got)
+	}
+}
+
+// 回归测试：多把密钥必须合并进**同一个** PublicKeys 方法。
+// 曾经给每个密钥各建一个 AuthMethod，导致第一把被拒后不再尝试后续密钥。
+func TestAuthMethodsMergesSigners(t *testing.T) {
+	dir := t.TempDir()
+	sshDir := filepath.Join(dir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// 生成两把不同类型的密钥
+	for _, name := range []string{"id_ed25519", "id_rsa"} {
+		var cmd string
+		args := []string{"-q", "-t", "ed25519", "-N", "", "-f", filepath.Join(sshDir, name)}
+		if name == "id_rsa" {
+			args = []string{"-q", "-t", "rsa", "-b", "2048", "-N", "", "-f", filepath.Join(sshDir, name)}
+		}
+		_ = cmd
+		if out, err := exec.Command("ssh-keygen", args...).CombinedOutput(); err != nil {
+			t.Skipf("ssh-keygen 不可用: %v %s", err, out)
+		}
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	methods, err := authMethods(&config{})
+	if err != nil {
+		t.Fatalf("authMethods: %v", err)
+	}
+	// 未设置密码时，方法数就等于「公钥方法数」。
+	// 两把密钥合并后应当只有 1 个；旧的实现会产生 2 个，正是 bug 的形态。
+	if len(methods) != 1 {
+		t.Fatalf("两把密钥应合并成 1 个认证方法，实际 %d 个", len(methods))
+	}
+	if len(lastKeyList) < 2 {
+		t.Fatalf("应当加载到 2 把密钥，实际 %d: %v", len(lastKeyList), lastKeyList)
 	}
 }

@@ -195,6 +195,10 @@ VS Code 仍会走 `Trigger local server download`，在客户端重新下一遍�
   `-force`，避免把正在使用的会话拆掉。
 - 下载走 `HTTPS_PROXY` / `HTTP_PROXY`（`http.ProxyFromEnvironment`），内网代理环境可用。
 - 首次连接未知主机时打印密钥指纹后继续（accept-new 语义），可用 `-strict-host-key` 收紧。
+- **多密钥认证**：本机有多把私钥（如 `id_ed25519` + `id_rsa`）时，必须全部放进同一个
+  `ssh.PublicKeys(...)` 方法。若给每把密钥各建一个认证方法，Go 的 ssh 在第一个被拒后就不再
+  尝试后面的，表现为「`unable to authenticate, attempted methods [none publickey]`」——
+  哪怕其中某把其实已在服务器 `authorized_keys` 里。认证失败时会打印尝试过的公钥指纹。
 - **主机密钥算法协商**：Go 的默认顺序先试 `ecdsa-sha2-nistp256`，而 OpenSSH 客户端优先
   `ssh-ed25519`。若 `known_hosts` 里只记了 ed25519（平时都用 `ssh` 连就会这样），Go 会拿
   ecdsa 去比对并报 `knownhosts: key mismatch`——看着像服务器换了密钥，其实只是算法不同。

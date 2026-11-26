@@ -22,7 +22,7 @@ const toolName = "vscpush"
 
 // 以下三个变量由构建时通过 -ldflags -X 注入；本地 go build 时保持默认值。
 var (
-	buildVersion = "0.4.0"
+	buildVersion = "0.4.1"
 	buildCommit  = "dev"
 	buildDate    = "unknown"
 )

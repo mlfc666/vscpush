@@ -47,6 +47,10 @@ func dialRemote(c *config) (*remoteConn, error) {
 	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
 	cl, err := ssh.Dial("tcp", addr, cfg)
 	if err != nil {
+		// 认证阶段的失败最容易让人摸不着头脑，附上尝试过的公钥和处置建议。
+		if strings.Contains(err.Error(), "unable to authenticate") {
+			return nil, fmt.Errorf("SSH 连接 %s 失败: %w\n   %s", addr, err, authHint())
+		}
 		return nil, fmt.Errorf("SSH 连接 %s 失败: %w", addr, err)
 	}
 	sf, err := sftp.NewClient(cl, sftp.MaxPacket(1<<15), sftp.UseConcurrentWrites(true))
@@ -197,15 +201,21 @@ func shellQuote(s string) string {
 }
 
 func authMethods(c *config) ([]ssh.AuthMethod, error) {
-	var methods []ssh.AuthMethod
+	var signers []ssh.Signer
+	var keyErr string
+	var loaded []string
 
+	// ssh-agent 里的密钥
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if conn, err := net.Dial("unix", sock); err == nil {
 			ag := agent.NewClient(conn)
-			methods = append(methods, ssh.PublicKeysCallback(ag.Signers))
+			if ss, err := ag.Signers(); err == nil {
+				signers = append(signers, ss...)
+			}
 		}
 	}
 
+	// 私钥文件
 	var candidates []string
 	if c.keyFile != "" {
 		candidates = []string{c.keyFile}
@@ -215,7 +225,6 @@ func authMethods(c *config) ([]ssh.AuthMethod, error) {
 			candidates = append(candidates, filepath.Join(home, ".ssh", n))
 		}
 	}
-	var keyErr string
 	for _, p := range candidates {
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -226,7 +235,20 @@ func authMethods(c *config) ([]ssh.AuthMethod, error) {
 			keyErr = fmt.Sprintf("%s: %v", p, err)
 			continue
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
+		signers = append(signers, signer)
+	}
+
+	// 关键：所有公钥必须放进**同一个** PublicKeys 方法。
+	// 若给每个密钥各建一个 AuthMethod，Go 的 ssh 在第一个公钥被拒后就不会再试后面的，
+	// 表现为「明明有可用密钥却 unable to authenticate」。实测：
+	//   [PublicKeys(ed), PublicKeys(rsa)] → 失败；PublicKeys(ed, rsa) → 成功。
+	var methods []ssh.AuthMethod
+	if len(signers) > 0 {
+		methods = append(methods, ssh.PublicKeys(signers...))
+		for _, sg := range signers {
+			loaded = append(loaded, fmt.Sprintf("%s(%s)", sg.PublicKey().Type(), ssh.FingerprintSHA256(sg.PublicKey())))
+		}
+		lastKeyList = loaded
 	}
 
 	if c.password != "" {
@@ -234,11 +256,26 @@ func authMethods(c *config) ([]ssh.AuthMethod, error) {
 	}
 	if len(methods) == 0 {
 		if keyErr != "" {
-			return nil, fmt.Errorf("没有可用认证方式（私钥解析失败，可能是带口令的密钥：%s）；请用 -key 指定私钥，或设置 VSCPUSH_PASSWORD", keyErr)
+			return nil, fmt.Errorf("没有可用认证方式（私钥解析失败，可能是带口令的密钥：%s）；请用 -key 指定私钥、启动 ssh-agent，或设置 VSCPUSH_PASSWORD", keyErr)
 		}
 		return nil, errors.New("没有可用认证方式：请用 -key 指定私钥、启动 ssh-agent，或设置 VSCPUSH_PASSWORD")
 	}
 	return methods, nil
+}
+
+// lastKeyList 记录本次尝试的公钥，认证失败时拼进错误信息，方便定位「用了哪几把钥匙」。
+var lastKeyList []string
+
+// authHint 在公钥认证失败时给出可操作的提示。
+func authHint() string {
+	parts := make([]string, 0, 4)
+	if len(lastKeyList) > 0 {
+		parts = append(parts, "已尝试公钥: "+strings.Join(lastKeyList, ", "))
+	} else {
+		parts = append(parts, "本机没有可用公钥（未找到 ~/.ssh/id_*，ssh-agent 也没有密钥）")
+	}
+	parts = append(parts, "处理办法：用 -key 指定服务器已授权的私钥；把公钥加到服务器 ~/.ssh/authorized_keys；或设置 VSCPUSH_PASSWORD 用密码登录")
+	return strings.Join(parts, "\n   ")
 }
 
 // preferredHostKeyAlgorithms 让协商顺序优先命中 known_hosts 里已有的密钥类型。
